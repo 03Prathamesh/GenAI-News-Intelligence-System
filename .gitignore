@@ -7,15 +7,16 @@ __pycache__/
 venv/
 .env
 
-# Data files
+# Data (IMPORTANT 🚫)
 data/
+*.csv
 
-# ML Models
-*.pkl
+# Models (optional: keep if you don't want to upload models)
+# *.pkl
 
 # Logs
 *.log
 
-# OS
+# OS files
 .DS_Store
 Thumbs.db
