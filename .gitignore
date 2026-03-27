@@ -2,19 +2,20 @@
 __pycache__/
 *.pyc
 *.pyo
-*.pyd
-*.db
 
 # Virtual Environment
 venv/
 .env
 
-# Model files (optional if large)
-*.pkl
+# Data files
+data/
 
-# OS files
-.DS_Store
-Thumbs.db
+# ML Models
+*.pkl
 
 # Logs
 *.log
+
+# OS
+.DS_Store
+Thumbs.db
