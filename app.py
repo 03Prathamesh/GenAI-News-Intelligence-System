@@ -5,7 +5,7 @@ from typing import List, Dict, TypedDict, Any
 
 # ================= BACKEND CONFIG =================
 BACKEND_BASE = "http://127.0.0.1:8000"
-PREDICT_URL = f"{BACKEND_BASE}/predict"
+PREDICT_URL = f"{BACKEND_BASE}/api/v1/predict"
 
 # ================= STREAMLIT CONFIG =================
 st.set_page_config(
@@ -14,6 +14,23 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# ================= CUSTOM CSS =================
+st.markdown("""
+<style>
+.big-title {font-size:28px; font-weight:bold;}
+.card {
+    padding:15px;
+    border-radius:12px;
+    background: linear-gradient(135deg, #1f2937, #111827);
+    color: white;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+}
+.green {color:#22c55e;}
+.red {color:#ef4444;}
+.orange {color:#f59e0b;}
+</style>
+""", unsafe_allow_html=True)
 
 st.title("📰 GenAI News Intelligence System")
 st.markdown("---")
@@ -24,15 +41,25 @@ class HistoryItem(TypedDict):
     prediction: str
     confidence: float
 
-# ================= SESSION STATE =================
+# ================= SESSION =================
 if "analysis_history" not in st.session_state:
     st.session_state["analysis_history"] = []
 
 if "news_text" not in st.session_state:
     st.session_state["news_text"] = ""
 
-def clear_text() -> None:
+def clear_text():
     st.session_state["news_text"] = ""
+
+# ================= COLOR HELPER =================
+def get_color(label):
+    if label == "REAL":
+        return "green"
+    elif label == "FAKE":
+        return "red"
+    elif label == "SUSPICIOUS":
+        return "orange"
+    return ""
 
 # ================= LAYOUT =================
 col1, col2 = st.columns([2, 1])
@@ -57,74 +84,78 @@ with col1:
         disabled=len(news_text.strip()) < 50
     )
 
-    colb2.button(
-        "🗑️ Clear",
-        use_container_width=True,
-        on_click=clear_text
-    )
+    colb2.button("🗑️ Clear", use_container_width=True, on_click=clear_text)
 
     if analyze:
-        progress = st.progress(0)
-        status = st.empty()
+        with st.spinner("🔄 AI analyzing (ML + RAG + OpenAI)..."):
 
-        status.write("🔄 Sending text to backend...")
-        progress.progress(20)
+            try:
+                response = requests.post(
+                    PREDICT_URL,
+                    json={"text": news_text},
+                    timeout=30
+                )
 
-        try:
-            response = requests.post(
-                PREDICT_URL,
-                json={"text": news_text},
-                timeout=30
-            )
+                if response.status_code != 200:
+                    st.error("❌ Backend error")
+                    st.stop()
 
-            progress.progress(50)
-            status.write("🧠 Running ML model...")
+                data: Dict[str, Any] = response.json()
 
-            if response.status_code != 200:
-                st.error("❌ Backend error")
+            except:
+                st.error("❌ Backend not reachable")
                 st.stop()
-
-            data: Dict[str, Any] = response.json()
-
-            progress.progress(80)
-            status.write("📊 Preparing results...")
-
-            progress.progress(100)
-            status.write("✅ Analysis complete")
-
-        except requests.exceptions.RequestException:
-            st.error("❌ Backend not reachable")
-            st.stop()
 
         # ================= RESULTS =================
         st.markdown("### 📊 Analysis Results")
 
+        final = data.get("final_prediction", "UNKNOWN")
+        color_class = get_color(final)
+
+        st.markdown(
+            f"<div class='card'><h2 class='{color_class}'>{final}</h2></div>",
+            unsafe_allow_html=True
+        )
+
+        st.markdown(f"**Status:** {data.get('verification_status')}")
+
+        # ================= METRICS =================
         r1, r2, r3, r4 = st.columns(4)
-        r1.metric("Authenticity", data["prediction"])
+        r1.metric("Model Prediction", data["prediction"])
         r2.metric("Confidence", f'{data["confidence"]}%')
         r3.metric("Category", data["category"])
         r4.metric("Risk", data["warning"])
 
-        st.markdown("### 🧠 Explanation")
+        # ================= EXPLANATION =================
+        st.markdown("### 🧠 Key Indicators")
         for reason in data["explanation"]:
             st.write(f"• {reason}")
 
-        st.markdown("---")
+        # ================= AI EXPLANATION =================
+        st.markdown("### 🤖 AI Explanation")
+        st.info(data.get("ai_explanation", "Not available"))
 
-        t1, t2 = st.columns(2)
-        with t1:
-            st.write("**Real Probability**")
-            st.progress(data["real_prob"] / 100)
-            st.write(f'{data["real_prob"]}%')
+        # ================= RAG =================
+        st.markdown("### 🌐 Fact Check (RAG)")
+        rag = data.get("rag_verification", {})
+        st.write(f"**Verdict:** {rag.get('verdict')}")
+        st.write(f"**Confidence:** {rag.get('confidence')}%")
+        st.write(rag.get("explanation"))
 
-        with t2:
-            st.write("**Fake Probability**")
-            st.progress(data["fake_prob"] / 100)
-            st.write(f'{data["fake_prob"]}%')
+        # ================= REALTIME =================
+        st.markdown("### 🔎 Sources Found")
+        realtime = data.get("realtime_verification", {})
 
+        for r in realtime.get("results", [])[:5]:
+            if r.get("trusted"):
+                st.success(f"✅ {r['title']}")
+            else:
+                st.warning(f"⚠️ {r['title']}")
+
+        # ================= HISTORY =================
         st.session_state["analysis_history"].insert(0, {
             "preview": news_text[:50] + "...",
-            "prediction": data["prediction"],
+            "prediction": final,
             "confidence": float(data["confidence"])
         })
 
@@ -132,53 +163,37 @@ with col1:
 with col2:
     st.subheader("📤 Upload CSV")
 
-    uploaded = st.file_uploader(
-        "Upload CSV with text column",
-        type=["csv"]
-    )
+    uploaded = st.file_uploader("Upload CSV with text column", type=["csv"])
 
     if uploaded:
-        df = pd.read_csv(uploaded)  # type: ignore
+        df = pd.read_csv(uploaded)
         st.success(f"Loaded {len(df)} rows")
 
-        text_col = None
-        for c in ["text", "content", "article", "news", "title"]:
-            if c in df.columns:
-                text_col = c
-                break
+        text_col = next((c for c in df.columns if c in ["text","content","article","news","title"]), None)
 
         if not text_col:
             st.error("No text column found")
         else:
-            sample = st.slider(
-                "Articles to analyze",
-                1,
-                min(20, len(df)),
-                5
-            )
+            sample = st.slider("Articles to analyze", 1, min(20, len(df)), 5)
 
             if st.button("📊 Analyze Batch", use_container_width=True):
-                results: List[Dict[str, Any]] = []
+                results = []
                 bar = st.progress(0)
 
                 for i, txt in enumerate(df[text_col].head(sample)):
                     if isinstance(txt, str) and len(txt.strip()) > 30:
-                        r = requests.post(
-                            PREDICT_URL,
-                            json={"text": txt},
-                            timeout=30
-                        ).json()
+                        r = requests.post(PREDICT_URL, json={"text": txt}).json()
 
                         results.append({
                             "Article": i + 1,
-                            "Prediction": r["prediction"],
-                            "Confidence": f'{r["confidence"]}%',
-                            "Category": r["category"]
+                            "Final": r.get("final_prediction"),
+                            "Confidence": f"{r.get('confidence')}%",
+                            "Category": r.get("category")
                         })
 
                     bar.progress((i + 1) / sample)
 
-                st.dataframe(pd.DataFrame(results), use_container_width=True)  # type: ignore
+                st.dataframe(pd.DataFrame(results), use_container_width=True)
 
 # ================= DASHBOARD =================
 st.markdown("---")
@@ -187,14 +202,13 @@ st.subheader("📊 System Dashboard")
 try:
     requests.get(BACKEND_BASE, timeout=3)
     backend_status = "✅ Active"
-except requests.exceptions.RequestException:
+except:
     backend_status = "❌ Down"
 
-d1, d2, d3, d4 = st.columns(4)
+d1, d2, d3 = st.columns(3)
 d1.metric("Backend Status", backend_status)
-d2.metric("Model", "Logistic Regression")
-d3.metric("Features", "TF-IDF (5k)")
-d4.metric("Deployment", "Streamlit + FastAPI")
+d2.metric("Model", "ML + RAG Hybrid")
+d3.metric("AI", "OpenAI")
 
 # ================= HISTORY =================
 if st.session_state["analysis_history"]:
@@ -209,16 +223,15 @@ st.sidebar.title("ℹ️ About")
 st.sidebar.info("""
 GenAI News Intelligence System
 
-• Fake News Detection  
-• Confidence Scoring  
-• Category Detection  
-• Explanation Engine 
-• Batch Analysis  
+🔥 Features:
+- Fake News Detection
+- RAG Fact Checking
+- AI Explanation
+- Hybrid Decision
 
-Backend: FastAPI  
-Frontend: Streamlit
+Tech:
+FastAPI + Streamlit + OpenAI
 """)
 
 st.sidebar.markdown("---")
-st.sidebar.write("Version: 1.0.0")
-st.sidebar.write("Updated: Jan 2026")
+st.sidebar.write("Version: 2.0.0")

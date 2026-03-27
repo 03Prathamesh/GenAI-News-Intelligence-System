@@ -35,25 +35,28 @@ The project is designed for real-world usability, academic evaluation, and place
 ## 📁 Project Structure
 GenAI-News-Intelligence-System/
 │
-├── data/
-│ ├── raw/
-│ └── processed/
+├── backend/
+│   ├── main.py
+│   ├── schemas.py
+│   ├── requirements.txt
+│   ├── services/
+│   │   ├── fake_news_service.py
+│   │   ├── rag_factcheck.py
+│   │   ├── realtime_service.py
+│   │   └── openai_explainer.py
+│   └── .gitignore
 │
 ├── models/
-│ ├── fake_news_model.pkl
-│ └── tfidf_vectorizer.pkl
+│   ├── fake_news_model.pkl
+│   └── tfidf_vectorizer.pkl
 │
 ├── src/
-│ ├── preprocess.py
-│ ├── sentiment.py
-│ ├── summarizer.py
-│ └── fake_news.py
+│   ├── preprocess.py
+│   ├── sentiment.py
+│   └── summarizer.py
 │
-├── notebooks/
-│ └── model_training.py
-│
-├── app.py
-├── requirements.txt
+├── data/                # (ignored in Git)
+├── app.py               # Streamlit UI
 ├── README.md
 └── report.pdf
 
