@@ -18,9 +18,9 @@ with open(MODEL_PATH, "rb") as f:
 with open(VECTORIZER_PATH, "rb") as f:
     vectorizer = pickle.load(f)
 
-POLITICAL = ["election", "government", "minister", "vote", "parliament", "party"]
+POLITICAL = ["election", "government", "minister", "vote", "parliament", "party","fraud"]
 HEALTH = ["cure", "doctor", "medicine", "disease", "vaccine", "health"]
-FINANCE = ["investment", "money", "profit", "loan", "scheme", "crypto"]
+FINANCE = ["investment", "money", "profit", "loan", "scheme", "crypto", "fraud"]
 
 
 def detect_category(text: str) -> str:
