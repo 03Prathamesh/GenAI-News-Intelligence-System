@@ -1,3 +1,20 @@
-data/
-data/raw/
-data/processed/
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.db
+
+# Virtual Environment
+venv/
+.env
+
+# Model files (optional if large)
+*.pkl
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

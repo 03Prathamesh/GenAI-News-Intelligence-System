@@ -212,7 +212,7 @@ GenAI News Intelligence System
 • Fake News Detection  
 • Confidence Scoring  
 • Category Detection  
-• Explanation Engine  
+• Explanation Engine 
 • Batch Analysis  
 
 Backend: FastAPI  
