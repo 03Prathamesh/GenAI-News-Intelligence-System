@@ -9,7 +9,6 @@ from services.openai_explainer import openai_explain
 from services.realtime_service import realtime_fact_check
 from services.rag_factcheck import rag_verify
 
-# ---------------- LOGGING ----------------
 logger = logging.getLogger(__name__)
 
 # ---------------- PATH SETUP ----------------
@@ -20,30 +19,41 @@ if ROOT_DIR not in sys.path:
 from src.preprocess import clean_text
 
 # ---------------- MODEL PATH ----------------
-MODEL_PATH: str = os.path.join(ROOT_DIR, "models", "fake_news_model.pkl")
+MODEL_PATH = os.path.join(ROOT_DIR, "models", "fake_news_model.pkl")
+VECTORIZER_PATH = os.path.join(ROOT_DIR, "models", "tfidf_vectorizer.pkl")
 
-# ---------------- LOAD MODEL ----------------
 model = None
+vectorizer = None
 
+# ---------------- SAFE LOAD ----------------
 try:
+    if not os.path.exists(MODEL_PATH):
+        raise FileNotFoundError(f"Model missing: {MODEL_PATH}")
+
+    if not os.path.exists(VECTORIZER_PATH):
+        raise FileNotFoundError(f"Vectorizer missing: {VECTORIZER_PATH}")
+
     with open(MODEL_PATH, "rb") as f:
         model = pickle.load(f)
 
-    logger.info("✅ Pipeline model loaded successfully")
+    with open(VECTORIZER_PATH, "rb") as f:
+        vectorizer = pickle.load(f)
+
+    logger.info("✅ Model + Vectorizer loaded successfully")
 
 except Exception as e:
-    logger.error(f"❌ Model loading failed: {str(e)}")
-    raise RuntimeError("Model loading failed")
+    logger.error(f"❌ Model loading failed: {e}")
+    model = None
+    vectorizer = None   # ❗ DO NOT crash app
 
 
-# ---------------- CATEGORY KEYWORDS ----------------
-POLITICAL: List[str] = ["election", "government", "minister", "vote", "parliament", "party", "fraud"]
-HEALTH: List[str] = ["cure", "doctor", "medicine", "disease", "vaccine", "health"]
-FINANCE: List[str] = ["investment", "money", "profit", "loan", "scheme", "crypto", "fraud"]
+# ---------------- CATEGORY ----------------
+POLITICAL = ["election", "government", "minister", "vote"]
+HEALTH = ["doctor", "vaccine", "health"]
+FINANCE = ["money", "loan", "crypto"]
 
-# ---------------- CATEGORY DETECTION ----------------
 def detect_category(text: str) -> str:
-    t: str = text.lower()
+    t = text.lower()
 
     if any(w in t for w in POLITICAL):
         return "Political"
@@ -55,92 +65,77 @@ def detect_category(text: str) -> str:
     return "General"
 
 
-# ---------------- EXPLANATION RULES ----------------
+# ---------------- EXPLANATION ----------------
 def generate_explanation(text: str, label: str) -> List[str]:
-    reasons: List[str] = []
-    t: str = text.lower()
+    reasons = []
+    t = text.lower()
 
-    if re.search(r"anonymous|unnamed|leaked|secret|unverified", t):
-        reasons.append("Anonymous or unverified sources")
+    if re.search(r"breaking|shocking|urgent", t):
+        reasons.append("Sensational language detected")
 
-    if re.search(r"guaranteed|miracle|shocking|breaking|urgent", t):
-        reasons.append("Sensational or exaggerated language")
-
-    if re.search(r"share this|viral|forward|before deleted", t):
-        reasons.append("Viral or social-media style wording")
-
-    if re.search(r"profit|get rich|millions|billions", t):
-        reasons.append("Focus on financial gain")
+    if re.search(r"share this|viral", t):
+        reasons.append("Viral-style wording")
 
     if not reasons:
-        reasons.append(
-            "Neutral and factual language detected"
-            if label == "REAL"
-            else "Patterns consistent with known fake news"
-        )
+        reasons.append("Neutral language")
 
     return reasons
 
 
 # ---------------- HYBRID DECISION ----------------
-def combine_results(ml_label: str, rag_verdict: str) -> Dict[str, str]:
+def combine_results(ml_label: str, rag_verdict: str):
     rag_verdict = rag_verdict.upper()
 
     if ml_label == "REAL" and rag_verdict == "SUPPORTED":
-        return {"final_prediction": "REAL", "status": "✅ Verified"}
+        return "REAL", "✅ Verified"
 
     if ml_label == "FAKE" and rag_verdict == "CONTRADICTED":
-        return {"final_prediction": "FAKE", "status": "🚨 Fake Confirmed"}
-
-    if (ml_label == "REAL" and rag_verdict == "CONTRADICTED") or \
-       (ml_label == "FAKE" and rag_verdict == "SUPPORTED"):
-        return {"final_prediction": "SUSPICIOUS", "status": "⚠️ Conflict detected"}
+        return "FAKE", "🚨 Fake Confirmed"
 
     if rag_verdict == "INCONCLUSIVE":
-        return {"final_prediction": ml_label, "status": "🤔 Not fully verified"}
+        return ml_label, "🤔 Not verified"
 
-    return {"final_prediction": ml_label, "status": "Unknown"}
+    return "SUSPICIOUS", "⚠️ Conflict"
 
 
 # ---------------- MAIN FUNCTION ----------------
 def predict_news(text: str) -> Dict[str, Any]:
     try:
-        if not text or not text.strip():
+        if not text.strip():
             raise ValueError("Empty input")
 
-        # -------- CLEAN TEXT --------
-        cleaned: str = clean_text(text)
+        if model is None or vectorizer is None:
+            return {
+                "prediction": "ERROR",
+                "confidence": 0,
+                "category": "Unknown",
+                "explanation": ["Model not loaded"],
+                "warning": "⚠️ Backend issue"
+            }
 
-        # -------- ML PREDICTION --------
-        pred = model.predict([cleaned])[0]
+        # -------- CLEAN --------
+        cleaned = clean_text(text)
 
-        # -------- CONFIDENCE --------
-        confidence: float = 90.0
-        try:
-            score = model.decision_function([cleaned])[0]
-            confidence = round(min(abs(score) * 10, 100), 2)
-        except Exception:
-            pass
+        # -------- VECTORIZE --------
+        vec = vectorizer.transform([cleaned])
 
-        label: str = "REAL" if pred == 1 else "FAKE"
+        # -------- ML --------
+        pred = model.predict(vec)[0]
+        prob = model.predict_proba(vec)[0]
 
-        # -------- CATEGORY --------
-        category: str = detect_category(text)
+        label = "REAL" if pred == 1 else "FAKE"
+        confidence = round(max(prob) * 100, 2)
 
-        # -------- RULE EXPLANATION --------
-        reasons: List[str] = generate_explanation(text, label)
+        # -------- OTHER --------
+        category = detect_category(text)
+        reasons = generate_explanation(text, label)
 
-        # -------- REALTIME FACT CHECK --------
-        realtime_data: Dict[str, Any] = realtime_fact_check(text)
+        realtime_data = realtime_fact_check(text)
+        rag_result = rag_verify(text)
 
-        # -------- RAG FACT CHECK --------
-        rag_result: Dict[str, Any] = rag_verify(text)
+        final_pred, status = combine_results(label, rag_result.get("verdict", ""))
 
-        # -------- HYBRID DECISION --------
-        combined = combine_results(label, rag_result.get("verdict", "INCONCLUSIVE"))
-
-        # -------- AI EXPLANATION --------
-        ai_explanation: str = openai_explain(
+        ai_explanation = openai_explain(
             prediction=label,
             confidence=confidence,
             reasons=reasons,
@@ -148,37 +143,28 @@ def predict_news(text: str) -> Dict[str, Any]:
             verification=rag_result.get("verdict", "")
         )
 
-        # -------- FINAL RESPONSE --------
         return {
             "prediction": label,
-            "final_prediction": combined["final_prediction"],
-            "verification_status": combined["status"],
+            "final_prediction": final_pred,
+            "verification_status": status,
             "confidence": confidence,
+            "real_prob": round(prob[1]*100,2),
+            "fake_prob": round(prob[0]*100,2),
             "category": category,
             "explanation": reasons,
-
-            # 🔍 INTELLIGENCE LAYERS
-            "realtime_verification": realtime_data,
             "rag_verification": rag_result,
+            "realtime_verification": realtime_data,
             "ai_explanation": ai_explanation,
-
-            "warning": "⚠️ Verify with trusted sources"
-            if combined["final_prediction"] != "REAL"
-            else "✅ Appears credible"
+            "warning": "⚠️ Verify sources" if final_pred != "REAL" else "✅ Credible"
         }
 
     except Exception as e:
-        logger.error(f"❌ Prediction error: {str(e)}")
+        logger.error(f"❌ Prediction error: {e}")
 
         return {
             "prediction": "ERROR",
-            "final_prediction": "ERROR",
-            "verification_status": "System failure",
-            "confidence": 0.0,
+            "confidence": 0,
             "category": "Unknown",
-            "explanation": ["Error processing input"],
-            "realtime_verification": {},
-            "rag_verification": {},
-            "ai_explanation": "System error occurred",
-            "warning": "⚠️ Please try again"
+            "explanation": ["System error"],
+            "warning": "⚠️ Try again"
         }

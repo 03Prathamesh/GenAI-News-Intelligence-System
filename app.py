@@ -1,237 +1,275 @@
 import streamlit as st
 import pandas as pd
 import requests
-from typing import List, Dict, TypedDict, Any
+import plotly.express as px
+import time
+from datetime import datetime
 
-# ================= BACKEND CONFIG =================
-BACKEND_BASE = "http://127.0.0.1:8000"
-PREDICT_URL = f"{BACKEND_BASE}/api/v1/predict"
+# ================= CONFIG =================
+BACKEND = "http://127.0.0.1:8000"
+API = f"{BACKEND}/api/v1/predict"
+HEALTH_API = f"{BACKEND}/health"  # if available
 
-# ================= STREAMLIT CONFIG =================
 st.set_page_config(
-    page_title="GenAI News Intelligence System",
-    page_icon="📰",
+    page_title="GenAI News Intelligence",
+    page_icon="🧠",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# ================= CUSTOM CSS =================
+# ================= STYLE =================
 st.markdown("""
 <style>
-.big-title {font-size:28px; font-weight:bold;}
-.card {
-    padding:15px;
-    border-radius:12px;
-    background: linear-gradient(135deg, #1f2937, #111827);
-    color: white;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+/* Base styling */
+body { background: linear-gradient(135deg,#020617,#0f172a); color:white; }
+.glass {
+    background: rgba(255,255,255,0.05);
+    backdrop-filter: blur(12px);
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom:15px;
+    transition: transform 0.2s ease;
 }
-.green {color:#22c55e;}
-.red {color:#ef4444;}
-.orange {color:#f59e0b;}
+.glass:hover { transform: translateY(-2px); }
+.neon-green { color:#22c55e; text-shadow:0 0 5px #22c55e; }
+.neon-red { color:#ef4444; text-shadow:0 0 5px #ef4444; }
+.neon-yellow { color:#f59e0b; text-shadow:0 0 5px #f59e0b; }
+.stButton>button {
+    border-radius:10px;
+    background: linear-gradient(90deg,#6366f1,#22c55e);
+    color:white;
+    font-weight:bold;
+    transition: all 0.3s ease;
+}
+.stButton>button:hover {
+    transform: scale(1.02);
+    box-shadow: 0 0 15px rgba(34,197,94,0.5);
+}
+/* Sidebar */
+.css-1d391kg { background: rgba(0,0,0,0.2); }
+/* Metrics */
+[data-testid="stMetricValue"] { font-size: 2rem; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("📰 GenAI News Intelligence System")
-st.markdown("---")
+# ================= HELPER FUNCTIONS =================
+def check_backend_health():
+    """Check if backend is reachable"""
+    try:
+        response = requests.get(HEALTH_API, timeout=5)
+        return response.status_code == 200
+    except:
+        return False
 
-# ================= TYPES =================
-class HistoryItem(TypedDict):
-    preview: str
-    prediction: str
-    confidence: float
+def safe_api_call(text):
+    """Make API call with error handling"""
+    try:
+        response = requests.post(API, json={"text": text}, timeout=30)
+        response.raise_for_status()
+        return response.json(), None
+    except requests.exceptions.ConnectionError:
+        return None, "Cannot connect to backend. Please check your network."
+    except requests.exceptions.Timeout:
+        return None, "Backend timed out. Try again later."
+    except requests.exceptions.HTTPError as e:
+        return None, f"API error: {e.response.status_code}"
+    except Exception as e:
+        return None, f"Unexpected error: {str(e)}"
 
-# ================= SESSION =================
-if "analysis_history" not in st.session_state:
-    st.session_state["analysis_history"] = []
+def add_to_history(data):
+    """Add analysis to session history with timestamp"""
+    data['timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    st.session_state.history.insert(0, data)
+    # Keep only last 20 entries
+    st.session_state.history = st.session_state.history[:20]
 
-if "news_text" not in st.session_state:
-    st.session_state["news_text"] = ""
+def clear_history():
+    st.session_state.history = []
 
-def clear_text():
-    st.session_state["news_text"] = ""
-
-# ================= COLOR HELPER =================
-def get_color(label):
-    if label == "REAL":
-        return "green"
-    elif label == "FAKE":
-        return "red"
-    elif label == "SUSPICIOUS":
-        return "orange"
-    return ""
-
-# ================= LAYOUT =================
-col1, col2 = st.columns([2, 1])
-
-# ================= LEFT PANEL =================
-with col1:
-    st.subheader("📝 Enter News Article")
-
-    news_text = st.text_area(
-        "Paste news content here",
-        height=260,
-        placeholder="Paste a complete news article...",
-        key="news_text"
-    )
-
-    colb1, colb2 = st.columns(2)
-
-    analyze = colb1.button(
-        "🔍 Analyze Article",
-        type="primary",
-        use_container_width=True,
-        disabled=len(news_text.strip()) < 50
-    )
-
-    colb2.button("🗑️ Clear", use_container_width=True, on_click=clear_text)
-
-    if analyze:
-        with st.spinner("🔄 AI analyzing (ML + RAG + OpenAI)..."):
-
-            try:
-                response = requests.post(
-                    PREDICT_URL,
-                    json={"text": news_text},
-                    timeout=30
-                )
-
-                if response.status_code != 200:
-                    st.error("❌ Backend error")
-                    st.stop()
-
-                data: Dict[str, Any] = response.json()
-
-            except:
-                st.error("❌ Backend not reachable")
-                st.stop()
-
-        # ================= RESULTS =================
-        st.markdown("### 📊 Analysis Results")
-
-        final = data.get("final_prediction", "UNKNOWN")
-        color_class = get_color(final)
-
-        st.markdown(
-            f"<div class='card'><h2 class='{color_class}'>{final}</h2></div>",
-            unsafe_allow_html=True
-        )
-
-        st.markdown(f"**Status:** {data.get('verification_status')}")
-
-        # ================= METRICS =================
-        r1, r2, r3, r4 = st.columns(4)
-        r1.metric("Model Prediction", data["prediction"])
-        r2.metric("Confidence", f'{data["confidence"]}%')
-        r3.metric("Category", data["category"])
-        r4.metric("Risk", data["warning"])
-
-        # ================= EXPLANATION =================
-        st.markdown("### 🧠 Key Indicators")
-        for reason in data["explanation"]:
-            st.write(f"• {reason}")
-
-        # ================= AI EXPLANATION =================
-        st.markdown("### 🤖 AI Explanation")
-        st.info(data.get("ai_explanation", "Not available"))
-
-        # ================= RAG =================
-        st.markdown("### 🌐 Fact Check (RAG)")
-        rag = data.get("rag_verification", {})
-        st.write(f"**Verdict:** {rag.get('verdict')}")
-        st.write(f"**Confidence:** {rag.get('confidence')}%")
-        st.write(rag.get("explanation"))
-
-        # ================= REALTIME =================
-        st.markdown("### 🔎 Sources Found")
-        realtime = data.get("realtime_verification", {})
-
-        for r in realtime.get("results", [])[:5]:
-            if r.get("trusted"):
-                st.success(f"✅ {r['title']}")
-            else:
-                st.warning(f"⚠️ {r['title']}")
-
-        # ================= HISTORY =================
-        st.session_state["analysis_history"].insert(0, {
-            "preview": news_text[:50] + "...",
-            "prediction": final,
-            "confidence": float(data["confidence"])
-        })
-
-# ================= RIGHT PANEL =================
-with col2:
-    st.subheader("📤 Upload CSV")
-
-    uploaded = st.file_uploader("Upload CSV with text column", type=["csv"])
-
-    if uploaded:
-        df = pd.read_csv(uploaded)
-        st.success(f"Loaded {len(df)} rows")
-
-        text_col = next((c for c in df.columns if c in ["text","content","article","news","title"]), None)
-
-        if not text_col:
-            st.error("No text column found")
-        else:
-            sample = st.slider("Articles to analyze", 1, min(20, len(df)), 5)
-
-            if st.button("📊 Analyze Batch", use_container_width=True):
-                results = []
-                bar = st.progress(0)
-
-                for i, txt in enumerate(df[text_col].head(sample)):
-                    if isinstance(txt, str) and len(txt.strip()) > 30:
-                        r = requests.post(PREDICT_URL, json={"text": txt}).json()
-
-                        results.append({
-                            "Article": i + 1,
-                            "Final": r.get("final_prediction"),
-                            "Confidence": f"{r.get('confidence')}%",
-                            "Category": r.get("category")
-                        })
-
-                    bar.progress((i + 1) / sample)
-
-                st.dataframe(pd.DataFrame(results), use_container_width=True)
-
-# ================= DASHBOARD =================
-st.markdown("---")
-st.subheader("📊 System Dashboard")
-
-try:
-    requests.get(BACKEND_BASE, timeout=3)
-    backend_status = "✅ Active"
-except:
-    backend_status = "❌ Down"
-
-d1, d2, d3 = st.columns(3)
-d1.metric("Backend Status", backend_status)
-d2.metric("Model", "ML + RAG Hybrid")
-d3.metric("AI", "OpenAI")
-
-# ================= HISTORY =================
-if st.session_state["analysis_history"]:
-    st.markdown("### 🕒 Recent Analyses")
-    for h in st.session_state["analysis_history"][:3]:
-        with st.expander(h["preview"]):
-            st.write(f"Prediction: {h['prediction']}")
-            st.write(f"Confidence: {h['confidence']}%")
+# ================= STATE =================
+if "history" not in st.session_state:
+    st.session_state.history = []
+if "last_analysis" not in st.session_state:
+    st.session_state.last_analysis = None
 
 # ================= SIDEBAR =================
-st.sidebar.title("ℹ️ About")
-st.sidebar.info("""
-GenAI News Intelligence System
+with st.sidebar:
+    st.title("🧠 GenAI System")
+    
+    # Backend health indicator
+    with st.spinner("Checking backend..."):
+        is_backend_up = check_backend_health()
+    if is_backend_up:
+        st.success("✅ System Active")
+    else:
+        st.error("❌ Backend Unreachable")
+    
+    page = st.radio("Navigation", [
+        "🏠 Dashboard",
+        "📊 Analytics",
+        "🌐 Sources",
+        "🕒 History"
+    ])
+    
+    st.markdown("---")
+    
+    # Example texts
+    with st.expander("📄 Example News"):
+        if st.button("Use 'Fake News' Example"):
+            st.session_state.example_text = """BREAKING: Scientists discover that chocolate is the #1 cause of cancer! Major study shows 100% of cancer patients ate chocolate in their lifetime. Big Pharma doesn't want you to know this!"""
+            st.rerun()
+        if st.button("Use 'Real News' Example"):
+            st.session_state.example_text = """NASA's Perseverance rover has successfully collected its first sample of Martian rock. The sample will be returned to Earth by a future mission for analysis. This marks a major milestone in Mars exploration."""
+            st.rerun()
+    
+    # Clear history button
+    if st.button("🗑️ Clear History", use_container_width=True):
+        clear_history()
+        st.success("History cleared!")
+        st.rerun()
 
-🔥 Features:
-- Fake News Detection
-- RAG Fact Checking
-- AI Explanation
-- Hybrid Decision
+# ================= DASHBOARD =================
+if page == "🏠 Dashboard":
+    st.title("🧠 News Intelligence Dashboard")
+    
+    # Use example text if set
+    default_text = st.session_state.get("example_text", "")
+    news = st.text_area("Paste News Article", height=250, value=default_text)
+    
+    col1, col2 = st.columns([3,1])
+    with col1:
+        analyze_btn = st.button("🚀 Analyze", use_container_width=True)
+    with col2:
+        if st.button("🔄 Clear", use_container_width=True):
+            st.session_state.example_text = ""
+            st.rerun()
+    
+    if analyze_btn:
+        if not news.strip():
+            st.warning("Please paste a news article to analyze.")
+        elif not is_backend_up:
+            st.error("Backend is unreachable. Cannot analyze.")
+        else:
+            with st.spinner("🧠 Analyzing with AI..."):
+                # Simulate some processing (optional)
+                progress_bar = st.progress(0)
+                for i in range(100):
+                    time.sleep(0.01) if i < 50 else None  # quick
+                    progress_bar.progress(i+1)
+                progress_bar.empty()
+                
+                data, error = safe_api_call(news)
+            
+            if error:
+                st.error(error)
+            else:
+                st.session_state.last_analysis = data
+                add_to_history(data)
+                
+                final = data.get("final_prediction", "UNKNOWN")
+                color = "neon-green" if final=="REAL" else "neon-red" if final=="FAKE" else "neon-yellow"
+                
+                # Result card
+                st.markdown(f"""
+                <div class="glass">
+                <h2 class="{color}">🔥 {final}</h2>
+                <p>{data.get("verification_status", "No verification status")}</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Metrics row
+                c1,c2,c3,c4 = st.columns(4)
+                c1.metric("Prediction", data.get("prediction", "N/A"))
+                c2.metric("Confidence", f"{data.get('confidence', 0)}%")
+                c3.metric("Category", data.get("category", "N/A"))
+                c4.metric("Risk Level", data.get("warning", "N/A"))
+                
+                # Chart
+                df = pd.DataFrame({
+                    "Type": ["Real","Fake"],
+                    "Score": [data.get("real_prob", 0), data.get("fake_prob", 0)]
+                })
+                fig = px.pie(df, names="Type", values="Score", hole=0.4,
+                             color_discrete_sequence=["#22c55e","#ef4444"])
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Explanation
+                st.subheader("🧠 Indicators")
+                for r in data.get("explanation", []):
+                    st.success(r)
+                
+                st.subheader("🤖 AI Explanation")
+                st.info(data.get("ai_explanation", "No explanation available."))
 
-Tech:
-FastAPI + Streamlit + OpenAI
-""")
+# ================= ANALYTICS =================
+elif page == "📊 Analytics":
+    st.title("📊 System Analytics")
+    
+    if not st.session_state.history:
+        st.warning("No analysis data yet. Run some predictions first.")
+    else:
+        df = pd.DataFrame(st.session_state.history)
+        # Ensure required columns exist
+        if 'prediction' not in df.columns:
+            st.error("History data missing 'prediction' column.")
+        else:
+            st.write("### Prediction Distribution")
+            fig = px.histogram(df, x="prediction", color="prediction",
+                               color_discrete_map={"REAL":"#22c55e","FAKE":"#ef4444"})
+            st.plotly_chart(fig)
+            
+            if 'confidence' in df.columns:
+                st.write("### Confidence Trend")
+                fig2 = px.line(df, y="confidence", title="Confidence over time")
+                st.plotly_chart(fig2)
+            
+            # Additional metrics
+            st.write("### Recent Activity")
+            recent = df.head(5)[['prediction','confidence','timestamp']] if 'timestamp' in df.columns else df.head(5)
+            st.dataframe(recent, use_container_width=True)
 
-st.sidebar.markdown("---")
-st.sidebar.write("Version: 2.0.0")
+# ================= SOURCES =================
+elif page == "🌐 Sources":
+    st.title("🌐 Fact Check Sources")
+    
+    if not st.session_state.history:
+        st.warning("Run an analysis first to see real-time verification sources.")
+    else:
+        latest = st.session_state.history[0]
+        sources = latest.get("realtime_verification", {}).get("results", [])
+        
+        if not sources:
+            st.info("No verification sources found for the latest analysis.")
+        else:
+            trusted = [s for s in sources if s.get("trusted")]
+            untrusted = [s for s in sources if not s.get("trusted")]
+            
+            if trusted:
+                st.subheader("✅ Trusted Sources")
+                for s in trusted:
+                    st.success(f"📰 {s.get('title', 'No title')}")
+            if untrusted:
+                st.subheader("⚠️ Questionable Sources")
+                for s in untrusted:
+                    st.warning(f"📰 {s.get('title', 'No title')}")
+
+# ================= HISTORY =================
+elif page == "🕒 History":
+    st.title("🕒 Analysis History")
+    
+    if not st.session_state.history:
+        st.warning("No history available. Analyze some news first.")
+    else:
+        for idx, item in enumerate(st.session_state.history):
+            timestamp = item.get('timestamp', 'No timestamp')
+            prediction = item.get('prediction', 'Unknown')
+            confidence = item.get('confidence', 0)
+            with st.expander(f"{timestamp} - {prediction} ({confidence}%)"):
+                st.write(f"**Confidence:** {confidence}%")
+                st.write(f"**Category:** {item.get('category', 'N/A')}")
+                st.write(f"**Risk Level:** {item.get('warning', 'N/A')}")
+                st.write("**AI Explanation:**")
+                st.info(item.get("ai_explanation", "No explanation available."))
+                if idx == 0 and st.button("🗑️ Delete This Entry", key=f"del_{idx}"):
+                    st.session_state.history.pop(idx)
+                    st.rerun()
