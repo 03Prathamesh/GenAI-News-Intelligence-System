@@ -6,9 +6,9 @@ import time
 from datetime import datetime
 
 # ================= CONFIG =================
-BACKEND = "http://127.0.0.1:8000"
+BACKEND = "https://genai-news-intelligence-system.onrender.com"
 API = f"{BACKEND}/api/v1/predict"
-HEALTH_API = f"{BACKEND}/health"  # if available
+HEALTH_API = f"{BACKEND}/health"
 
 st.set_page_config(
     page_title="GenAI News Intelligence",
